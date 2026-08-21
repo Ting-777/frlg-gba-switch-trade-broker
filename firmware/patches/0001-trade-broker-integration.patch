@@ -1,0 +1,99 @@
+From: FRLG Trade Broker contributors
+Subject: [RFC] expose Gen 3 trade-emulator events to the broker
+
+Base: GB-Link/GBLink-Firmware 2facc86bc7292b1adad436ba8ebd5a7ccd649c12
+
+This RFC patch records the smallest reviewed integration points. It is NOT yet
+buildable: copy firmware/gb-link into src/broker, add a real Zephyr SHA-256
+binding, and resolve the explicit commit marker with hardware tests first.
+
+--- a/src/control.hpp
++++ b/src/control.hpp
+@@
+ #include "payloads/pokemon.hpp"
++#include "broker/broker_trade_bridge.hpp"
+@@
+             case Mode::gbaTradeEmu:
+             {
+@@
+                 party::partyInit();
+-                Transport::registerDataHandler(party::usbReceivePkmFile, nullptr);
++                if (modeVariant == 1) {
++                    auto& broker = tradebroker::TradeBridge::instance();
++                    Transport::registerDataHandler(tradebroker::TradeBridge::receiveData, &broker);
++                } else {
++                    Transport::registerDataHandler(party::usbReceivePkmFile, nullptr);
++                }
+
+--- a/src/payloads/pokemon.hpp
++++ b/src/payloads/pokemon.hpp
+@@
+     std::span<const uint8_t> getParty();
++    std::span<const uint8_t, 600> getPartnerParty();
++    bool partnerPartyComplete();
++    void tradePkmnAtIndices(uint8_t partnerIndex, uint8_t localIndex);
+
+--- a/src/payloads/pokemon.cpp
++++ b/src/payloads/pokemon.cpp
+@@
+     std::span<const uint8_t> getParty() { return g_party; }
++    std::span<const uint8_t, 600> getPartnerParty() { return g_partnerParty; }
++    bool partnerPartyComplete() { return g_partnerReceivedBytes == g_partnerParty.size(); }
++    void tradePkmnAtIndices(uint8_t partnerIndex, uint8_t localIndex) {
++        std::ranges::copy(
++            std::span(g_partnerParty).subspan(partnerIndex * 100, 100),
++            slot(localIndex).begin());
++    }
+
+--- a/src/sections/tradeConnection.cpp
++++ b/src/sections/tradeConnection.cpp
+@@
+ #include "../payloads/pokemon.hpp"
++#include "../broker/broker_trade_bridge.hpp"
+@@
+                         party::partnerPartyInit();
++                        tradebroker::TradeBridge::instance().sessionStarted();
+@@
+                     party::partnerPartyConstruct(...);
++                    if (party::partnerPartyComplete())
++                        tradebroker::TradeBridge::instance().partnerPartyReady(
++                            party::getPartnerParty());
+@@
+                     case LINKCMD_READY_TO_TRADE:
+                     {
+-                        sendLinkCommand(LINKCMD_SET_MONS_TO_TRADE, command[2]);
+-                        party::tradePkmnAtIndex(command[2]);
++                        auto& broker = tradebroker::TradeBridge::instance();
++                        const uint8_t local = broker.select(party::getPartnerParty(), command[2]);
++                        sendLinkCommand(LINKCMD_SET_MONS_TO_TRADE, local);
++                        party::tradePkmnAtIndices(command[2], local);
+                         break;
+                     }
+@@
+             case LINKCMD_READY_CLOSE_LINK:
+             {
++                // Conservative candidate: by READY_CLOSE_LINK the trade has completed.
++                // Hardware fault injection MUST verify this before removing the RFC label.
++                tradebroker::TradeBridge::instance().committed();
+                 m_packetLayer.setTransiveHandler(readyCloseLinkCommand());
+                 k_sleep(K_MSEC(400));
++                tradebroker::TradeBridge::instance().linkClosed();
+                 return nextSection;
+             }
+
+--- a/src/sections/CMakeLists.txt
++++ b/src/sections/CMakeLists.txt
+@@
++zephyr_library_sources(../broker/broker_protocol.cpp)
++zephyr_library_sources(../broker/broker_trade_bridge.cpp)
+
+Safety notes:
+
+* Do not remove the compile-time SHA-256 blocker by returning dummy data.
+* Cache acknowledgements for duplicate command sequences instead of applying
+  the command twice; the RFC codec currently drops duplicates and therefore
+  still needs that retry behavior before hardware use.
+* Emit partnerPartyReady once per session, not once per subsequent mail word.
+* Implement ABORT_IF_SAFE from an explicitly reviewed pre-commit phase.
+* The 220-byte mail block remains empty upstream; broker v1 refuses Mail.
+
