@@ -6,13 +6,37 @@
 - GB-Link-compatible RP2040 adapter flashed with the experimental broker firmware integration.
 - Linux PC/Raspberry Pi with USB access to the adapter and a supported Wi-Fi PHY for the existing LDN
   bridge.
-- Switch/Switch 2 FRLG release, legal keys required by the upstream LDN tool, and a legitimate 100-byte
-  placeholder `.pk3`.
+- Switch/Switch 2 FRLG release, legal keys required by the upstream LDN tool, and a legitimate encrypted
+  100-byte placeholder `.ek3` (raw wire form).
+
+## Install and preflight
+
+```bash
+python3.12 -m venv .venv
+. .venv/bin/activate
+pip install -e '.[test,hardware]'
+pytest
+make -C firmware/tests/host
+
+git -C /path/to/GBLink-Firmware checkout 2facc86bc7292b1adad436ba8ebd5a7ccd649c12
+./scripts/install_gb_link_integration.sh /path/to/GBLink-Firmware
+
+sudo .venv/bin/frlg-trade-broker --preflight \
+  --gba /dev/serial/by-id/YOUR_GB_LINK \
+  --placeholder ./placeholder.ek3 \
+  --switch-checkout /path/to/frlg-ldn-trade-gba-bridge \
+  --keys /path/to/prod.keys --phy phy0 \
+  --journal /var/lib/frlg-trade-broker/journal.json
+```
+
+Preflight checks the placeholder checksum/Mail policy, device permissions, non-empty keys file, pinned
+Switch bridge commit, Python hardware dependencies, Wi-Fi PHY, and journal directory. It never opens a
+serial or LDN connection.
 
 ## Staged validation
 
 1. **USB codec only:** run protocol tests and corrupt frames to verify CRC, length, version, transaction
-   id, and replay rejection.
+   id, first-HELLO adoption, stale rejection, and duplicate-command ACK replay.
 2. **GBA only:** load disposable `B`; verify the firmware reports the full 600-byte party and selected
    slot; confirm exported `A` is exactly that 100-byte slice; measure/confirm the committed event and
    successful link-close event.
@@ -33,5 +57,5 @@ capabilities; follow that project's instructions.
 - Mail is refused until the full six-entry 220-byte mail block can be preserved and tested.
 - The exact Switch 2026 implementation and platform behavior may change; pin and revalidate the upstream
   bridge commit.
-- The included firmware integration is a reviewable starting point, not a signed/prebuilt firmware image.
-
+- The included firmware integration compiles as host-side C++ and applies cleanly to the pinned source;
+  a full Zephyr image still must be built in the upstream SDK and is not signed or prebuilt here.

@@ -21,6 +21,7 @@ class MockSwitchEndpoint:
         self.connected = False
         self.trades = 0
         self.session_connects = 0
+        self._prepared: Pokemon100 | None = None
 
     def connect(self) -> None:
         if self.connected:
@@ -31,10 +32,20 @@ class MockSwitchEndpoint:
     def wait_for_trade_menu(self) -> None:
         if not self.connected:
             raise EndpointError("mock Switch is not connected")
+        if self._prepared is None:
+            raise EndpointError("mock Switch offer was not prepared before menu wait")
+
+    def prepare_offer(self, offered_mon: Pokemon100) -> None:
+        if not self.connected:
+            raise EndpointError("mock Switch is not connected")
+        offered_mon.refuse_mail()
+        self._prepared = offered_mon
 
     def trade_once(self, offered_mon: Pokemon100) -> TradeResult:
         if not self.connected:
             raise EndpointError("mock Switch is not connected")
+        if self._prepared != offered_mon:
+            raise EndpointError("mock Switch offer was not prepared before trade")
         call = self.trades + 1
         if call == self.fail_on_call:
             raise EndpointError(f"mock Switch disconnected during trade {call}")
@@ -43,8 +54,9 @@ class MockSwitchEndpoint:
         if committed:
             self.owned_mon = offered_mon
         self.trades = call
+        self._prepared = None
         return TradeResult(offered_mon, received, committed)
 
     def close(self) -> None:
         self.connected = False
-
+        self._prepared = None

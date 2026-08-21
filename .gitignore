@@ -9,3 +9,4 @@ dist/
 .venv/
 journal.json
 received-*.pk3
+firmware/tests/host/brokerProtocolTest

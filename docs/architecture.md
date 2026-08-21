@@ -25,7 +25,8 @@ persistent ownership state.
 - `broker.gba.protocol`: binary stream framing, CRC32, version, UUID transaction id, message sequence,
   replay rejection, and bounded payloads.
 - `broker.gba.gb_link`: endpoint adapter around the framed firmware event API.
-- `broker.switch.trade_adapter`: validation and lifecycle adapter around a persistent real LDN driver.
+- `broker.switch.upstream_driver`: persistent real LDN driver. After trade 1 it withholds the next
+  200-byte party response until A is staged, while the upstream live loop keeps Pia/link state alive.
 - mock endpoints model ownership and inject failures without hardware.
 
 ## Verified source observations
@@ -77,9 +78,9 @@ Reviewed 2026-08-20 at the commits listed in `license-research.md`.
 - Whether dynamically replacing a future offered slot between rounds is accepted by the live host.
 - Mail semantics. v1 refuses Mail rather than risk silent loss.
 
-The reviewed Switch engine immediately arms the next round from `_commit()`. A safe real driver must add
-an explicit inter-round gate before the host's next party exchange; restarting the legacy CLI would break
-the same-session requirement and is deliberately not used as a workaround.
+The reviewed Switch engine immediately arms the next round from `_commit()`. The broker driver now adds
+an explicit inter-round gate before the host's next 200-byte party exchange; restarting the legacy CLI
+would break the same-session requirement and is deliberately not used.
 
 ## Trust model
 

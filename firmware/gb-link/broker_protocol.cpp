@@ -82,19 +82,32 @@ void Codec::consume() {
             discardPrefix(magic.size());
             continue;
         }
+        const auto message = static_cast<Message>(m_rx[5]);
         const uint32_t sequence = read32(&m_rx[28]);
         const bool sameTransaction = std::equal(
             m_transactionId.begin(), m_transactionId.end(), m_rx.begin() + 12);
-        if (!sameTransaction || sequence <= m_lastReceivedSequence) {
-            discardPrefix(frameSize); // duplicate commands are never applied twice
+        const bool startsTransaction = message == Message::hello;
+        if (!sameTransaction && !startsTransaction) {
+            discardPrefix(frameSize);
             continue;
         }
-        m_lastReceivedSequence = sequence;
+        if (!sameTransaction) {
+            std::copy(m_rx.begin() + 12, m_rx.begin() + 28, m_transactionId.begin());
+            m_sendSequence = 0;
+            m_lastReceivedSequence = 0;
+        }
+        if (sequence < m_lastReceivedSequence) {
+            discardPrefix(frameSize); // stale/out-of-order commands are never applied
+            continue;
+        }
+        const bool replayed = sequence == m_lastReceivedSequence;
+        if (!replayed) m_lastReceivedSequence = sequence;
         ParsedFrame frame{
-            static_cast<Message>(m_rx[5]),
+            message,
             {},
             sequence,
             std::span<const uint8_t>(m_rx.data() + headerSize, payloadSize),
+            replayed,
         };
         std::copy(m_rx.begin() + 12, m_rx.begin() + 28, frame.transactionId.begin());
         m_receive(m_receiveContext, frame);
@@ -132,4 +145,3 @@ void Codec::discardPrefix(size_t count) {
 }
 
 } // namespace tradebroker
-

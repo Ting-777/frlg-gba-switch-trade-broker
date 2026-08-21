@@ -49,6 +49,8 @@ class TradeCoordinator:
         record = self.journal.create(placeholder)
         gba_connected = False
         switch_connected = False
+        gba_trade_started = False
+        gba_commit_observed = False
 
         try:
             self.switch.connect()
@@ -62,6 +64,7 @@ class TradeCoordinator:
                 note="starting Switch trade B for placeholder P",
             )
             self.fault_hook("before_switch_stage1", record)
+            self.switch.prepare_offer(placeholder)
             self.switch.wait_for_trade_menu()
             first = self.switch.trade_once(placeholder)
             self.fault_hook("after_switch1_endpoint_before_persist", record)
@@ -89,9 +92,11 @@ class TradeCoordinator:
                 note="starting physical GBA trade A for B",
             )
             self.fault_hook("before_gba_trade", record)
+            gba_trade_started = True
             gba_result = self.gba.trade_once(b_mon)
             self.fault_hook("after_gba_endpoint_before_persist", record)
             self._validate_gba_result(gba_result, expected_offer=b_mon)
+            gba_commit_observed = True
             a_mon = gba_result.received_mon
             a_mon.refuse_mail()
             self.journal.save_artifact(record, "A", a_mon)
@@ -116,6 +121,7 @@ class TradeCoordinator:
                 note="starting Switch return trade P for A",
             )
             self.fault_hook("before_switch_stage2", record)
+            self.switch.prepare_offer(a_mon)
             self.switch.wait_for_trade_menu()
             second = self.switch.trade_once(a_mon)
             self.fault_hook("after_switch2_endpoint_before_persist", record)
@@ -143,6 +149,12 @@ class TradeCoordinator:
             )
             return TransactionOutcome(record.transaction_id, b_mon, a_mon, returned)
         except Exception as exc:
+            if gba_connected and gba_trade_started and not gba_commit_observed:
+                try:
+                    if self.gba.abort_if_safe():
+                        LOG.warning("requested a pre-commit GBA abort after transaction failure")
+                except Exception:
+                    LOG.exception("could not request a safe GBA abort")
             self._mark_recovery(record, exc)
             raise
         finally:

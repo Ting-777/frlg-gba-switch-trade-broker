@@ -77,6 +77,35 @@ def test_unconfirmed_gba_commit_requires_recovery(tmp_path, mons) -> None:
     assert store.load().state_enum is JournalState.RECOVERY_REQUIRED
 
 
+def test_gba_failure_attempts_safe_abort(tmp_path, mons) -> None:
+    a_mon, b_mon, placeholder = mons
+
+    class FailingGba(MockGbaEndpoint):
+        def __init__(self):
+            super().__init__(a_mon)
+            self.abort_calls = 0
+
+        def trade_once(self, offered_mon):
+            del offered_mon
+            raise EndpointError("wired exchange failed before selection")
+
+        def abort_if_safe(self):
+            self.abort_calls += 1
+            return True
+
+    gba = FailingGba()
+    store = JournalStore(tmp_path / "journal.json")
+    coordinator = TradeCoordinator(
+        journal=store,
+        gba=gba,
+        switch=MockSwitchEndpoint(b_mon),
+    )
+    with pytest.raises(EndpointError, match="wired exchange failed"):
+        coordinator.execute(placeholder)
+    assert gba.abort_calls == 1
+    assert store.load().state_enum is JournalState.RECOVERY_REQUIRED
+
+
 def test_unexpected_disconnect_requires_recovery(tmp_path, mons) -> None:
     a_mon, b_mon, placeholder = mons
     store = JournalStore(tmp_path / "journal.json")
@@ -111,4 +140,3 @@ def test_placeholder_mismatch_requires_recovery(tmp_path, mons) -> None:
     record = store.load()
     assert record.state_enum is JournalState.RECOVERY_REQUIRED
     assert "mismatch" in (record.last_error or "")
-
