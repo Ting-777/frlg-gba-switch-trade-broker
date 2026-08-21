@@ -154,9 +154,9 @@ class JournalStore:
         if current in TERMINAL_STATES:
             raise InvalidTransition(f"terminal journal state {current.value} cannot transition")
 
-        record.sequence += 1
-        record.state = new_state.value
-        record.updated_at = _now()
+        # Validate the complete update before mutating the in-memory record. A
+        # rejected transition must not leave a caller holding a half-transitioned
+        # object that differs from the durable journal.
         if pokemon:
             for key, value in pokemon.items():
                 if key not in record.pokemon:
@@ -164,12 +164,18 @@ class JournalStore:
                 previous = record.pokemon[key]
                 if previous is not None and value != previous:
                     raise JournalError(f"hash for {key} is immutable")
+        if selected_gba_slot is not None and not 0 <= selected_gba_slot <= 5:
+            raise JournalError("GBA selected slot must be 0..5")
+
+        record.sequence += 1
+        record.state = new_state.value
+        record.updated_at = _now()
+        if pokemon:
+            for key, value in pokemon.items():
                 record.pokemon[key] = value
         if locations:
             record.locations.update(locations)
         if selected_gba_slot is not None:
-            if not 0 <= selected_gba_slot <= 5:
-                raise JournalError("GBA selected slot must be 0..5")
             record.selected_gba_slot = selected_gba_slot
         record.last_error = error
         record.history.append(
@@ -235,4 +241,3 @@ class JournalStore:
                     os.unlink(temp_name)
                 except FileNotFoundError:
                     pass
-

@@ -126,7 +126,7 @@ class TradeCoordinator:
                 record,
                 JournalState.A_COMMITTED_TO_SWITCH,
                 note="Switch return commit confirmed; A transferred and candidate P captured",
-                locations={"A": "switch", "P": "broker", "B": "gba"},
+                locations={"A": "switch", "P": "broker (unverified candidate)", "B": "gba"},
             )
             self.fault_hook("before_placeholder_validation", record)
             if returned != placeholder:
@@ -139,6 +139,7 @@ class TradeCoordinator:
                 record,
                 JournalState.COMPLETE,
                 note="placeholder recovered byte-for-byte; A/B/P exchange complete",
+                locations={"P": "broker"},
             )
             return TransactionOutcome(record.transaction_id, b_mon, a_mon, returned)
         except Exception as exc:
@@ -190,4 +191,3 @@ class TradeCoordinator:
             )
         except Exception:
             LOG.exception("could not persist RECOVERY_REQUIRED after %r", exc)
-

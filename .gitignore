@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+pytest-of-root/
 .coverage
 build/
 dist/
@@ -8,4 +9,3 @@ dist/
 .venv/
 journal.json
 received-*.pk3
-

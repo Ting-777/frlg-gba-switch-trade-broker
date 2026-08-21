@@ -77,9 +77,12 @@ Reviewed 2026-08-20 at the commits listed in `license-research.md`.
 - Whether dynamically replacing a future offered slot between rounds is accepted by the live host.
 - Mail semantics. v1 refuses Mail rather than risk silent loss.
 
+The reviewed Switch engine immediately arms the next round from `_commit()`. A safe real driver must add
+an explicit inter-round gate before the host's next party exchange; restarting the legacy CLI would break
+the same-session requirement and is deliberately not used as a workaround.
+
 ## Trust model
 
 An endpoint's `commit_confirmed` is evidence supplied by that endpoint, not proof of the other console's
 save completion. A disconnect near commit is ambiguous and always stops for recovery. Journal ownership
 means “broker's best evidenced belief,” never an instruction to repeat a trade automatically.
-

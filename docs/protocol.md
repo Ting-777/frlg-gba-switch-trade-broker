@@ -2,6 +2,11 @@
 
 Binary frames are transported over the existing USB byte stream. Newline-delimited binary is forbidden.
 
+On CDC-ACM, GBLink-Firmware already wraps logical transport chunks as `GB | channel | u16 length |
+payload` with a 64-byte payload limit. `FGBR` is an inner stream: the Python transport enters Gen 3
+trade-emulator mode variant 1, chunks each `FGBR` frame into existing data-channel packets, and
+reassembles those packets before CRC parsing. This extends the existing transport instead of replacing it.
+
 ## Frame
 
 All integers are little-endian.
@@ -56,4 +61,3 @@ preservation; absence of that bit activates the v1 Mail refusal policy.
 - Emit `TRADE_COMMITTED` only at the reviewed irreversible link state; this location is intentionally
   marked hardware-validation-required in the experimental patch.
 - Emit `TRADE_LINK_CLOSED` after the normal wired close handshake, not merely on USB disconnect.
-
