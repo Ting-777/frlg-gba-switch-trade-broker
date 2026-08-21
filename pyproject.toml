@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "frlg-gba-switch-trade-broker"
+version = "0.1.0"
+description = "Transactional application-level trade broker for physical GBA FRLG and Switch FRLG"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "Ting-777" }]
+dependencies = []
+
+[project.optional-dependencies]
+serial = ["pyserial>=3.5"]
+test = ["pytest>=8.0", "pytest-cov>=5.0"]
+
+[project.scripts]
+frlg-trade-broker = "broker.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["broker"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["broker"]
+
