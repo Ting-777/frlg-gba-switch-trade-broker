@@ -17,15 +17,28 @@ from .protocol import Frame, FrameDecoder, MessageType, ReplayWindow
 from .serial import ByteTransport
 
 
+class _ReceiveTimeout(EndpointError):
+    pass
+
+
 class GbLinkEndpoint:
-    def __init__(self, transport: ByteTransport, *, timeout: float = 120.0, offer_slot: int = 0):
+    def __init__(
+        self,
+        transport: ByteTransport,
+        *,
+        timeout: float = 120.0,
+        request_retry_interval: float = 2.0,
+        offer_slot: int = 0,
+    ):
         if not 0 <= offer_slot <= 5:
             raise ValueError("offer_slot must be 0..5")
         self.transport = transport
         self.timeout = timeout
+        self.request_retry_interval = request_retry_interval
         self.offer_slot = offer_slot
         self._decoder = FrameDecoder()
         self._replay = ReplayWindow()
+        self._inbox: list[Frame] = []
         self._txid = uuid4()
         self._out_sequence = 0
         self._connected = False
@@ -33,9 +46,17 @@ class GbLinkEndpoint:
     def connect(self) -> None:
         self.transport.open()
         self._connected = True
-        self._send(MessageType.HELLO, b"frlg-trade-broker/0.1")
-        self._send(MessageType.GET_CAPABILITIES)
-        capabilities = self._wait_for({MessageType.CAPABILITIES})
+        try:
+            self._request(
+                MessageType.HELLO, b"frlg-trade-broker/0.1", {MessageType.HELLO}
+            )
+            capabilities = self._request(
+                MessageType.GET_CAPABILITIES, b"", {MessageType.CAPABILITIES}
+            )
+        except Exception:
+            self.transport.close()
+            self._connected = False
+            raise
         if len(capabilities.payload) != 4:
             raise ProtocolError("CAPABILITIES payload must be u32")
         required = 0b0011_1111  # export party/mon, inject, abort, commit, close
@@ -49,8 +70,11 @@ class GbLinkEndpoint:
         if not self._connected:
             raise EndpointError("GB-Link endpoint is not connected")
         offered_mon.refuse_mail()
-        self._send(MessageType.SET_OFFER_MON, bytes([self.offer_slot]) + offered_mon.raw)
-        ready = self._wait_for({MessageType.OFFER_READY})
+        ready = self._request(
+            MessageType.SET_OFFER_MON,
+            bytes([self.offer_slot]) + offered_mon.raw,
+            {MessageType.OFFER_READY},
+        )
         expected_ready = bytes([self.offer_slot]) + bytes.fromhex(offered_mon.sha256)
         if ready.payload != expected_ready:
             raise ProtocolError("OFFER_READY slot/hash does not match requested record")
@@ -85,8 +109,11 @@ class GbLinkEndpoint:
     def abort_if_safe(self) -> bool:
         if not self._connected:
             return True
-        self._send(MessageType.ABORT_IF_SAFE)
-        result = self._wait_for({MessageType.TRADE_ABORTED, MessageType.ERROR})
+        result = self._request(
+            MessageType.ABORT_IF_SAFE,
+            b"",
+            {MessageType.TRADE_ABORTED, MessageType.ERROR},
+        )
         return result.message_type is MessageType.TRADE_ABORTED
 
     def close(self) -> None:
@@ -97,9 +124,34 @@ class GbLinkEndpoint:
         self._out_sequence += 1
         self.transport.write(Frame(message_type, self._txid, self._out_sequence, payload).encode())
 
-    def _wait_for(self, wanted: set[MessageType]) -> Frame:
+    def _request(
+        self, message_type: MessageType, payload: bytes, wanted: set[MessageType]
+    ) -> Frame:
+        """Retry a command byte-for-byte so firmware can replay its cached ACK."""
+        self._out_sequence += 1
+        encoded = Frame(message_type, self._txid, self._out_sequence, payload).encode()
         deadline = time.monotonic() + self.timeout
+        while True:
+            self.transport.write(encoded)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                return self._wait_for(
+                    wanted, timeout=min(self.request_retry_interval, remaining)
+                )
+            except _ReceiveTimeout:
+                continue
+        names = ", ".join(sorted(item.name for item in wanted))
+        raise EndpointError(f"timeout waiting for retried GB-Link response(s): {names}")
+
+    def _wait_for(self, wanted: set[MessageType], *, timeout: float | None = None) -> Frame:
+        wait_time = self.timeout if timeout is None else timeout
+        deadline = time.monotonic() + wait_time
         while time.monotonic() < deadline:
+            queued = self._take_queued(wanted)
+            if queued is not None:
+                return queued
             data = self.transport.read(512, min(0.25, max(0.0, deadline - time.monotonic())))
             if not data:
                 continue
@@ -107,10 +159,18 @@ class GbLinkEndpoint:
                 if frame.transaction_id != self._txid:
                     raise ProtocolError("event transaction id does not match active transaction")
                 self._replay.accept(frame)
-                if frame.message_type in wanted:
-                    return frame
-                if frame.message_type is MessageType.ERROR:
-                    raise EndpointError(f"GB-Link error: {frame.payload!r}")
+                self._inbox.append(frame)
+            queued = self._take_queued(wanted)
+            if queued is not None:
+                return queued
         names = ", ".join(sorted(item.name for item in wanted))
-        raise EndpointError(f"timeout waiting for GB-Link event(s): {names}")
+        raise _ReceiveTimeout(f"timeout waiting for GB-Link event(s): {names}")
 
+    def _take_queued(self, wanted: set[MessageType]) -> Frame | None:
+        for index, frame in enumerate(self._inbox):
+            if frame.message_type in wanted:
+                return self._inbox.pop(index)
+            if frame.message_type is MessageType.ERROR:
+                self._inbox.pop(index)
+                raise EndpointError(f"GB-Link error: {frame.payload!r}")
+        return None

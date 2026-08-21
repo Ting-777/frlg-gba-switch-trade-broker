@@ -38,6 +38,7 @@ struct ParsedFrame {
     std::array<uint8_t, 16> transactionId;
     uint32_t sequence;
     std::span<const uint8_t> payload;
+    bool replayed;
 };
 
 using ReceiveFn = void (*)(void* context, const ParsedFrame& frame);
@@ -76,4 +77,3 @@ private:
 };
 
 } // namespace tradebroker
-

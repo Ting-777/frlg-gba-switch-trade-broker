@@ -1,6 +1,6 @@
 # FRLG GBA ↔ Switch Trade Broker
 
-> **Status: experimental, pre-hardware-validation. Do not use valuable Pokémon yet.**
+> **Status: hardware-candidate, not yet physically validated. Begin only with disposable Pokémon.**
 
 This project coordinates three ordinary application-level trades so a physical original GBA running
 Pokémon FireRed/LeafGreen can exchange a Pokémon with the Switch/Switch 2 FRLG release. The broker's
@@ -47,8 +47,8 @@ and believed ownership. An incomplete transaction never auto-resumes.
 |---|---|
 | `Pokemon100`, journal, transaction coordinator | Implemented and tested |
 | Mock GBA/Switch end-to-end demo | Implemented and tested |
-| Framed/versioned GB-Link USB protocol | Python codec implemented; firmware integration patch is experimental |
-| Switch adapter boundary | Implemented; real LDN driver wiring remains hardware validation work |
+| Framed/versioned GB-Link USB protocol | Firmware/Python codecs, SHA-256 and replay-safe command ACKs implemented |
+| Switch adapter boundary | Persistent two-trade driver with an explicit inter-round offer gate implemented |
 | Physical GBA/Switch end-to-end | **Not validated** |
 
 See [architecture](docs/architecture.md), [transaction model](docs/transaction-model.md),
@@ -59,7 +59,7 @@ See [architecture](docs/architecture.md), [transaction model](docs/transaction-m
 ```bash
 python3.12 -m venv .venv
 . .venv/bin/activate
-pip install -e '.[test,serial]'
+pip install -e '.[test,hardware]'
 pytest
 frlg-trade-broker --mock-demo --journal ./journal.json
 ```
@@ -67,18 +67,46 @@ frlg-trade-broker --mock-demo --journal ./journal.json
 The demo creates deterministic 100-byte `A`, `B`, and `P` fixtures and proves final ownership is
 GBA=`B`, Switch=`A`, broker=`P`.
 
-## Real-hardware shape (not yet validated)
+## Prepare a real-hardware candidate
+
+Pin the two reviewed upstreams, install the GB-Link integration, then build/flash it with the upstream
+Zephyr workflow:
 
 ```bash
-sudo frlg-trade-broker \
-  --gba /dev/ttyACM0 \
-  --placeholder placeholder.pk3 \
+git clone https://github.com/GB-Link/GBLink-Firmware.git
+git -C GBLink-Firmware checkout 2facc86bc7292b1adad436ba8ebd5a7ccd649c12
+./scripts/install_gb_link_integration.sh ./GBLink-Firmware
+
+git clone https://github.com/andrew171717/frlg-ldn-trade-gba-bridge.git
+git -C frlg-ldn-trade-gba-bridge checkout d1299e124d1ebe702b447e5c9d70501ed57683e6
+```
+
+The placeholder must be an encrypted/raw, checksum-valid 100-byte party record (`.ek3` wire form).
+Run the non-connecting preflight first:
+
+```bash
+sudo .venv/bin/frlg-trade-broker --preflight \
+  --gba /dev/serial/by-id/YOUR_GB_LINK \
+  --placeholder placeholder.ek3 \
+  --switch-checkout ./frlg-ldn-trade-gba-bridge \
   --phy phy0 \
   --keys prod.keys \
   --journal /var/lib/frlg-trade-broker/journal.json
 ```
 
-`placeholder.pk3` must be a legitimate, user-provided, exactly 100-byte party record. The broker does
+Only after preflight succeeds, remove `--preflight` to start the real session:
+
+```bash
+sudo .venv/bin/frlg-trade-broker \
+  --gba /dev/serial/by-id/YOUR_GB_LINK \
+  --placeholder placeholder.ek3 \
+  --switch-checkout ./frlg-ldn-trade-gba-bridge \
+  --phy phy0 \
+  --keys prod.keys \
+  --journal /var/lib/frlg-trade-broker/journal.json
+```
+
+`placeholder.ek3` must be a legitimate, user-provided, exactly 100-byte party record. The broker does
 not create a hacked placeholder. Pokémon holding Mail are refused in v1 because the reviewed GB-Link
 path sends an empty 220-byte mail block; mail is never silently stripped.
 
@@ -89,7 +117,9 @@ path sends an empty 220-byte mail block; mail is never silently stripped.
 - Keep the journal and its adjacent artifact directory; they are the recovery evidence.
 - If the CLI reports `RECOVERY_REQUIRED`, stop. Do not start another trade until ownership is manually
   reconciled using hashes and on-console inspection.
-- A successful mock test does not prove real hardware timing or commit semantics.
+- Keep the Switch in the same Direct Corner session after trade 1; the driver holds its party response
+  while the physical GBA trade runs, then supplies A for trade 2.
+- A successful mock/host test does not prove real hardware timing or commit semantics.
 
 ## Licensing and attribution
 
@@ -100,4 +130,3 @@ files, functions, and reuse limits are documented in [license research](docs/lic
 
 Pokémon and Nintendo trademarks belong to their respective owners. This is an independent research
 project and is not affiliated with or endorsed by Nintendo, The Pokémon Company, or Game Freak.
-

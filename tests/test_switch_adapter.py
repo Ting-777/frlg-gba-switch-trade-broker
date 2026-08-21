@@ -32,11 +32,12 @@ def test_adapter_reuses_one_session_and_changes_offer(mons) -> None:
     driver = Driver()
     session = SwitchTradeSession(driver)
     session.connect()
+    session.prepare_offer(placeholder)
     first = session.trade_once(placeholder)
+    session.prepare_offer(a_mon)
     second = session.trade_once(a_mon)
     session.close()
     assert first.received_mon == b_mon
     assert second.received_mon == placeholder
     assert driver.owned == a_mon.raw
     assert driver.connects == 1
-

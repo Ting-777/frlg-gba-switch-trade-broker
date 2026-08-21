@@ -24,6 +24,7 @@ class SwitchTradeSession:
     def __init__(self, driver: SwitchSessionDriver):
         self.driver = driver
         self.connected = False
+        self._prepared: Pokemon100 | None = None
 
     def connect(self) -> None:
         if self.connected:
@@ -36,16 +37,31 @@ class SwitchTradeSession:
             raise RuntimeError("Switch session is not connected")
         self.driver.wait_for_trade_menu()
 
-    def trade_once(self, offered_mon: Pokemon100) -> TradeResult:
+    def prepare_offer(self, offered_mon: Pokemon100) -> None:
+        """Stage the offer before the host begins its party exchange.
+
+        The second call opens the paused next round in the same LDN session.  It
+        therefore cannot be delayed until ``trade_once``: by then the Switch has
+        already requested the party bytes that contain this Pokémon.
+        """
         if not self.connected:
             raise RuntimeError("Switch session is not connected")
         offered_mon.refuse_mail()
         self.driver.set_offer_mon(offered_mon.raw)
+        self._prepared = offered_mon
+
+    def trade_once(self, offered_mon: Pokemon100) -> TradeResult:
+        if not self.connected:
+            raise RuntimeError("Switch session is not connected")
+        offered_mon.refuse_mail()
+        if self._prepared != offered_mon:
+            raise RuntimeError("Switch offer must be prepared before waiting for the trade menu")
         offered, received, committed = self.driver.trade_once()
+        self._prepared = None
         return TradeResult(Pokemon100(offered), Pokemon100(received), bool(committed))
 
     def close(self) -> None:
         if self.connected:
             self.driver.close()
             self.connected = False
-
+            self._prepared = None
