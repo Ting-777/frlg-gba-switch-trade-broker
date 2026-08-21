@@ -77,7 +77,7 @@ git clone https://github.com/GB-Link/GBLink-Firmware.git
 git -C GBLink-Firmware checkout 2facc86bc7292b1adad436ba8ebd5a7ccd649c12
 ./scripts/install_gb_link_integration.sh ./GBLink-Firmware
 
-git clone https://github.com/fig02/frlg-ldn-trade-gba-bridge.git
+git clone https://github.com/andrew171717/frlg-ldn-trade-gba-bridge.git
 git -C frlg-ldn-trade-gba-bridge checkout d1299e124d1ebe702b447e5c9d70501ed57683e6
 ```
 
